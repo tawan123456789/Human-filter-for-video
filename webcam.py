@@ -44,40 +44,31 @@ if torch.cuda.is_available():
 
 
 # ============================================================
-# LOAD RVM ARCHITECTURE
-# ============================================================
-
-print("\nLoading RVM-MobileNetV3 architecture...")
-
-model = torch.hub.load(
-    "PeterL1n/RobustVideoMatting",
-    "mobilenetv3",
-    pretrained=False,
-    trust_repo=True
-)
-
-
-# ============================================================
-# LOAD OUR FINE-TUNED CHECKPOINT
+# LOAD MODEL & CHECKPOINT
 # ============================================================
 
 print("Loading checkpoint:")
 print(CHECKPOINT_PATH)
 
-checkpoint = torch.load(
-    CHECKPOINT_PATH,
-    map_location=device,
-    weights_only=False
-)
-
-# checkpoint ที่เราสร้างใน notebook
-# มี model_state_dict อยู่ข้างใน
-model.load_state_dict(
-    checkpoint["model_state_dict"]
-)
-
-model = model.to(device)
-model.eval()
+try:
+    from rvm_backbones import load_rvm_checkpoint
+    model, checkpoint = load_rvm_checkpoint(CHECKPOINT_PATH, device=device)
+except Exception as e:
+    print(f"Fallback to torch.hub loader (Error: {e})")
+    model = torch.hub.load(
+        "PeterL1n/RobustVideoMatting",
+        "mobilenetv3",
+        pretrained=False,
+        trust_repo=True
+    )
+    checkpoint = torch.load(
+        CHECKPOINT_PATH,
+        map_location=device,
+        weights_only=False
+    )
+    model.load_state_dict(checkpoint["model_state_dict"])
+    model = model.to(device)
+    model.eval()
 
 
 # แสดงข้อมูล checkpoint
