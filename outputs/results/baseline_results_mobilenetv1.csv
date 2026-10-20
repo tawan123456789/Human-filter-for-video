@@ -1,0 +1,2 @@
+model,loss,iou,dice,precision,recall
+RVM-MobileNetV1 Pretrained,0.684441432134429,0.0,0.0,0.0,0.0
