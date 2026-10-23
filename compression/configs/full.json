@@ -1,0 +1,20 @@
+{
+  "runs": [
+    {"id": "CONTROL", "ops": [], "kd": false},
+    {"id": "UP40", "ops": [{"kind": "prune", "sparsity": 0.4}], "kd": true},
+    {"id": "UP60", "ops": [{"kind": "prune", "sparsity": 0.6}], "kd": true},
+    {"id": "UP70", "ops": [{"kind": "prune", "sparsity": 0.7}], "kd": true},
+    {"id": "UP80", "ops": [{"kind": "prune", "sparsity": 0.8}], "kd": true},
+    {"id": "UP90", "ops": [{"kind": "prune", "sparsity": 0.9}], "kd": true},
+    {"id": "SVD75", "ops": [{"kind": "svd", "ratio": 0.75}], "kd": true},
+    {"id": "SVD50", "ops": [{"kind": "svd", "ratio": 0.5}], "kd": true},
+    {"id": "SVD25", "ops": [{"kind": "svd", "ratio": 0.25}], "kd": true},
+    {"id": "SLIM75", "ops": [{"kind": "slim", "ratio": 0.75}], "kd": true},
+    {"id": "SLIM50", "ops": [{"kind": "slim", "ratio": 0.5}], "kd": true},
+    {"id": "SLIM375", "ops": [{"kind": "slim", "ratio": 0.375}], "kd": true},
+    {"id": "SLIM25", "ops": [{"kind": "slim", "ratio": 0.25}], "kd": true},
+    {"id": "SLIM50_SVD50", "ops": [{"kind": "slim", "ratio": 0.5}, {"kind": "svd", "ratio": 0.5}], "kd": true},
+    {"id": "SLIM375_SVD25", "ops": [{"kind": "slim", "ratio": 0.375}, {"kind": "svd", "ratio": 0.25}], "kd": true},
+    {"id": "SLIM50_SVD50_UP70", "ops": [{"kind": "slim", "ratio": 0.5}, {"kind": "svd", "ratio": 0.5}, {"kind": "prune", "sparsity": 0.7}], "kd": true}
+  ]
+}

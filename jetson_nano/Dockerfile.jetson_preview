@@ -1,0 +1,39 @@
+FROM ubuntu:18.04 AS build
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates curl binutils python3.8 python3.8-distutils libpython3.8 \
+      libglib2.0-0 libgomp1 libstdc++6 libgl1 libx11-6 libxext6 libsm6 libxrender1 \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN curl -fsSLo /tmp/get-pip.py https://bootstrap.pypa.io/pip/3.8/get-pip.py \
+    && python3.8 /tmp/get-pip.py \
+    && rm /tmp/get-pip.py \
+    && python3.8 -m pip install --no-cache-dir \
+      pyinstaller==6.22.3 \
+      numpy==1.24.4 \
+      opencv-python==4.10.0.84 \
+      protobuf==4.25.5 \
+      flatbuffers
+
+WORKDIR /src
+COPY jetson_nano/webcam_mask_preview.py /src/webcam_mask_preview.py
+COPY compression/outputs/jetson_nano/SLIM50_SVD50.onnx /src/model/SLIM50_SVD50.onnx
+COPY jetson_nano/wheels/onnxruntime_gpu-1.11.0-cp38-cp38-linux_aarch64.whl /src/wheels/onnxruntime_gpu-1.11.0-cp38-cp38-linux_aarch64.whl
+
+RUN python3.8 -m pip install --no-cache-dir \
+      /src/wheels/onnxruntime_gpu-1.11.0-cp38-cp38-linux_aarch64.whl
+
+RUN python3.8 -m PyInstaller \
+      --noconfirm --clean --onedir \
+      --name nano1_mask_preview \
+      --distpath /out \
+      --workpath /tmp/pyinstaller-work \
+      --add-data /src/model/SLIM50_SVD50.onnx:model \
+      /src/webcam_mask_preview.py
+
+FROM scratch AS artifact
+COPY --from=build /out/nano1_mask_preview /nano1_mask_preview

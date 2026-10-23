@@ -1,0 +1,3 @@
+# Install only if running ONNX FP32 / static INT8 PTQ on CPU.
+onnx>=1.16,<2
+onnxruntime>=1.19,<2

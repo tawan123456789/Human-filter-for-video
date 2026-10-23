@@ -1,0 +1,11 @@
+{
+  "runs": [
+    {"id": "CONTROL", "ops": [], "kd": false},
+    {"id": "UP40", "ops": [{"kind": "prune", "sparsity": 0.4}], "kd": true},
+    {"id": "UP70", "ops": [{"kind": "prune", "sparsity": 0.7}], "kd": true},
+    {"id": "SVD50", "ops": [{"kind": "svd", "ratio": 0.5}], "kd": true},
+    {"id": "SLIM75", "ops": [{"kind": "slim", "ratio": 0.75}], "kd": true},
+    {"id": "SLIM50", "ops": [{"kind": "slim", "ratio": 0.5}], "kd": true},
+    {"id": "SLIM50_SVD50", "ops": [{"kind": "slim", "ratio": 0.5}, {"kind": "svd", "ratio": 0.5}], "kd": true}
+  ]
+}

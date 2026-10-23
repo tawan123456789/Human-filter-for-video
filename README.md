@@ -118,7 +118,14 @@ python compare_webcam.py
 streamlit run app.py
 ```
 
-### 3. การรันโน้ตบุ๊กทดลอง (Jupyter Notebooks)
+### 3. เว็บแอปเปรียบเทียบ Compression Models
+เปรียบเทียบ checkpoint และไฟล์ export ทุกตัวที่อยู่ใน `compression/outputs` ด้วยภาพหรือวิดีโอ:
+```powershell
+streamlit run compression_app.py
+```
+เลือกใช้ CUDA สำหรับ PyTorch models ได้ ส่วน ONNX จะรันผ่าน CPU Execution Provider และใช้ recurrent states ต่อเนื่องในวิดีโอ
+
+### 4. การรันโน้ตบุ๊กทดลอง (Jupyter Notebooks)
 สามารถเปิดไฟล์โน้ตบุ๊กในโฟลเดอร์ `notebooks/` ด้วย VSCode แล้วกด **Run All** เพื่อรันขั้นตอนตั้งแต่การเตรียมข้อมูล, การเทรน, การประเมินผล, การวาดกราฟ ไปจนถึงการ Export เป็น TorchScript:
 * [rvm_mobilenetv3_small_finetune.ipynb](notebooks/rvm_mobilenetv3_small_finetune.ipynb)
 * [rvm_mobilenetv2_finetune.ipynb](notebooks/rvm_mobilenetv2_finetune.ipynb)
