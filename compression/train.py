@@ -93,12 +93,23 @@ def experiment(args,spec,context=None):
         result=json.loads(result_file.read_text(encoding='utf-8'))
         saved_config_file=run_dir/'config.json'
         saved_cfg=json.loads(saved_config_file.read_text(encoding='utf-8')).get('run') if saved_config_file.is_file() else None
-        if (result['checkpoint_sha256'],result['split_sha256'],result['spec'])!=(checkpoint_hash,split_hash,spec) or saved_cfg!=run_cfg:
+        compatible_saved=dict(saved_cfg or {})
+        compatible_new=dict(run_cfg)
+        if args.continue_training:
+            compatible_saved.pop('epochs',None);compatible_new.pop('epochs',None)
+            compatible_saved.pop('patience',None);compatible_new.pop('patience',None)
+        if (result['checkpoint_sha256'],result['split_sha256'],result['spec'])!=(checkpoint_hash,split_hash,spec) or compatible_saved!=compatible_new:
             raise RuntimeError(f'Run {run_id} exists with different source/training config; change run-id, output-dir, or pass --force.')
-        if not (run_dir/'best.pt').is_file() or not (run_dir/'deploy_fp32_state.pth').is_file():
-            raise RuntimeError(f'Run {run_id} reports completion but its artifacts are missing.')
-        print('Already completed:',run_id)
-        return result
+        if args.continue_training:
+            if args.epochs<=int(saved_cfg.get('epochs',0)):
+                raise ValueError('--continue-training requires --epochs greater than the saved epoch limit')
+        elif saved_cfg!=run_cfg:
+            raise RuntimeError(f'Run {run_id} exists with different source/training config; use --continue-training to extend epochs or --force to restart.')
+        else:
+            if not (run_dir/'best.pt').is_file() or not (run_dir/'deploy_fp32_state.pth').is_file():
+                raise RuntimeError(f'Run {run_id} reports completion but its artifacts are missing.')
+            print('Already completed:',run_id)
+            return result
     if args.force:
         for name in ('last.pt','best.pt','result.json','history.csv'):
             (run_dir/name).unlink(missing_ok=True)
@@ -118,7 +129,11 @@ def experiment(args,spec,context=None):
     start_epoch=0;best_iou=-1.;bad=0;history=[]
     if last_file.is_file():
         saved=torch.load(last_file,map_location='cpu',weights_only=True)
-        if saved['run_cfg']!=run_cfg:
+        saved_run_cfg=dict(saved['run_cfg']);new_run_cfg=dict(run_cfg)
+        if args.continue_training:
+            saved_run_cfg.pop('epochs',None);new_run_cfg.pop('epochs',None)
+            saved_run_cfg.pop('patience',None);new_run_cfg.pop('patience',None)
+        if saved_run_cfg!=new_run_cfg:
             raise RuntimeError(f'Cannot resume {run_id}: configuration changed; use --force for a fresh run')
         model.load_state_dict(saved['model_state'])
         masks=saved['masks']
@@ -223,6 +238,7 @@ def parser_factory():
     p.add_argument('--iters',type=int,default=50)
     p.add_argument('--skip-benchmark',action='store_true')
     p.add_argument('--force',action='store_true',help='Discard previous run and restart')
+    p.add_argument('--continue-training',action='store_true',help='Extend a completed run from last.pt, allowing only epochs/patience changes')
     return p
 
 

@@ -1,4 +1,4 @@
-"""FP16 GPU and stateful ONNX FP32/INT8 CPU validation for RVM compression.
+"""FP16 and stateful ONNX validation for RVM compression.
 
 ONNX export includes four recurrent state inputs and four state outputs. PTQ
 requires optional `onnx`/`onnxruntime` dependencies and is not guaranteed to
@@ -121,24 +121,113 @@ def export_stateful_onnx(model,path,resolution=256,opset_version=17):
     return path
 
 
+def convert_onnx_fp16(source, destination):
+    """Convert graph weights/computation to FP16, keeping public I/O in FP32."""
+    import onnx
+    from onnxruntime.transformers.float16 import convert_float_to_float16
+    graph=onnx.load(str(source))
+    converted=convert_float_to_float16(graph,keep_io_types=True)
+    # ORT's converter appends Cast nodes after the original nodes; restore a
+    # valid stable topological order before checking/saving the converted graph.
+    nodes=list(converted.graph.node)
+    producer={name:i for i,node in enumerate(nodes) for name in node.output if name}
+    ordered=[];remaining=set(range(len(nodes)));available={x.name for x in converted.graph.input}
+    available.update(x.name for x in converted.graph.initializer)
+    while remaining:
+        ready=[i for i in sorted(remaining) if all(not name or name not in producer or producer[name]==i or name in available for name in nodes[i].input)]
+        if not ready:
+            # Some values can be optional empty-string inputs; unresolved edges
+            # indicate a malformed graph and should not be hidden.
+            raise RuntimeError('FP16 conversion generated cyclic or unresolved ONNX dependencies')
+        for i in ready:
+            ordered.append(nodes[i]);remaining.remove(i)
+            available.update(name for name in nodes[i].output if name)
+    del converted.graph.node[:]
+    converted.graph.node.extend(ordered)
+    onnx.checker.check_model(converted)
+    destination=Path(destination);destination.parent.mkdir(parents=True,exist_ok=True)
+    onnx.save(converted,str(destination))
+    # A nominal FP16 export must contain actual FP16 weights and/or computation.
+    fp16_initializers=sum(x.data_type==onnx.TensorProto.FLOAT16 for x in converted.graph.initializer)
+    fp16_nodes=sum(1 for n in converted.graph.node if n.op_type in {'Cast'} and any(
+        a.name=='to' and a.i==onnx.TensorProto.FLOAT16 for a in n.attribute))
+    if not fp16_initializers and not fp16_nodes:
+        raise RuntimeError('FP16 conversion yielded no FP16 initializers or compute casts')
+    return {'fp16_initializers':fp16_initializers,'fp16_cast_nodes':fp16_nodes,
+            'initializer_count':len(converted.graph.initializer)}
+
+
+def create_ort_session(path, require_cuda=True):
+    import onnxruntime as ort
+    available=ort.get_available_providers()
+    if require_cuda and 'CUDAExecutionProvider' not in available:
+        raise RuntimeError(f'CUDAExecutionProvider unavailable; available providers: {available}')
+    providers=['CUDAExecutionProvider','CPUExecutionProvider'] if require_cuda else ['CPUExecutionProvider']
+    session=ort.InferenceSession(str(path),providers=providers)
+    active=session.get_providers()
+    if require_cuda and (not active or active[0]!='CUDAExecutionProvider'):
+        raise RuntimeError(f'CUDA provider was not activated; active providers: {active}')
+    return session
+
+
+def validate_fp16_export(model,fp16_path,loader,resolution,warmup,iters):
+    """Graph checks, 5-frame zero/propagated state parity, metrics and CUDA timing."""
+    import onnx, onnxruntime as ort
+    graph=onnx.load(str(fp16_path));onnx.checker.check_model(graph)
+    meta={'input_names':[x.name for x in graph.graph.input],
+          'output_names':[x.name for x in graph.graph.output],
+          'input_types':[x.type.tensor_type.elem_type for x in graph.graph.input],
+          'output_types':[x.type.tensor_type.elem_type for x in graph.graph.output],
+          'fp16_initializers':sum(x.data_type==onnx.TensorProto.FLOAT16 for x in graph.graph.initializer),
+          'providers_available':ort.get_available_providers()}
+    expected_in=['image','r1','r2','r3','r4']; expected_out=['logits','r1o','r2o','r3o','r4o']
+    if meta['input_names']!=expected_in or meta['output_names']!=expected_out:
+        raise RuntimeError(f'Invalid recurrent interface: {meta}')
+    sess=create_ort_session(fp16_path,require_cuda=True)
+    meta['providers_active']=sess.get_providers()
+    # Feed graph-specific zero states and carry outputs for multiple frames.
+    x=torch.rand(1,3,resolution,resolution).numpy().astype(np.float32)
+    states=[np.zeros(tuple(int(v) for v in t.shape),np.float32) for t in sess.get_inputs()[1:]]
+    model=model.cpu().float().eval(); errors=[]
+    with torch.inference_mode():
+        for _ in range(5):
+            po=StatefulRVM(model)(torch.from_numpy(x),*[torch.from_numpy(s) for s in states])
+            oo=_run_model_session(sess,x,states)
+            for a,b in zip(po,oo):
+                if a.shape!=b.shape or not np.isfinite(b).all():raise RuntimeError('Bad output dimensions or non-finite ONNX value')
+                errors.append(float(np.max(np.abs(a.numpy()-b))))
+            states=oo[1:]
+    meta['five_frame_max_abs_error']=max(errors)
+    meta['five_frame_mean_abs_error']=float(np.mean(errors))
+    meta['state_propagation_checked']=True
+    if meta['five_frame_max_abs_error']>0.08:raise RuntimeError('ONNX FP16 stateful parity exceeded 0.08')
+    meta['validation_metrics']=ort_dataset_iou(sess,loader)
+    meta['benchmark']=ort_benchmark(sess,resolution,warmup,iters)
+    meta['artifact_bytes']=Path(fp16_path).stat().st_size
+    return meta
+
+
 def check_onnx_parity(model,sess,shape,atol=0.035):
     model.cpu().float().eval()
+    torch.manual_seed(20261024)
     inp=make_input(model,shape)
     x=inp[0].numpy();states=[v.numpy() for v in inp[1:]]
-    maxdelta=0
+    maxdelta=0; deltas=[]; per_output=[0.0]*5
     with torch.inference_mode():
-        for _ in range(2):
+        for _ in range(5):
             py_out=StatefulRVM(model)(torch.from_numpy(x),*[torch.from_numpy(s) for s in states])
             ox=_run_model_session(sess,x,states)
             if len(ox)!=5:raise RuntimeError('ONNX does not return all 5 outputs (mask + 4 states)')
-            for a,b in zip(py_out,ox):
+            for index,(a,b) in enumerate(zip(py_out,ox)):
                 if a.shape!=b.shape:raise RuntimeError(f'ONNX state shape mismatch: {a.shape} vs {b.shape}')
                 delta=float(np.max(np.abs(a.numpy()-b)))
                 maxdelta=max(maxdelta,delta)
-                if not np.isfinite(delta) or delta>atol:
+                per_output[index]=max(per_output[index],delta)
+                deltas.append(float(np.mean(np.abs(a.numpy()-b))))
+                if not np.isfinite(delta) or (atol is not None and delta>atol):
                     raise RuntimeError(f'ONNX/PyTorch stateful parity failure: max absolute error {delta:.6f} > {atol}')
             states=ox[1:]
-    return maxdelta
+    return {'max_abs':maxdelta,'mean_abs':float(np.mean(deltas)),'max_abs_by_output':dict(zip(['logits','r1o','r2o','r3o','r4o'],per_output)),'frames':5,'outputs_checked':5}
 
 
 def ort_dataset_iou(sess,loader):
@@ -200,7 +289,7 @@ def quantize(args):
         print(result)
         # Reload clean FP32 model for ONNX export.
         model=load_variant(args,args.run_id).cpu().eval()
-    if args.format=='onnx':
+    if args.format in ('onnx','onnx-fp16'):
         try:
             import onnx
             import onnxruntime as ort
@@ -208,16 +297,32 @@ def quantize(args):
             raise RuntimeError('Install optional ONNX export packages: pip install -r compression/requirements-quant.txt') from exc
         p32=out/f'stateful_fp32_opset{args.opset}.onnx'
         export_stateful_onnx(model,p32,args.size,args.opset)
-        cpu32=ort.InferenceSession(str(p32),providers=['CPUExecutionProvider'])
-        parity=check_onnx_parity(model,cpu32,args.size)
-        metrics32=ort_dataset_iou(cpu32,dl['val'])
-        float_performance=ort_benchmark(cpu32,args.size,args.warmup,args.iters)
-        result={'format':'onnx_fp32','opset':args.opset,'run_id':args.run_id,
-                'val_iou':metrics32['iou'],'valid':metrics32['iou']>=threshold,
-                'parity_max_abs':parity,'deploy_bytes':p32.stat().st_size,
-                'path':str(p32),**float_performance}
-        atomic_json(result,out/f'onnx_fp32_opset{args.opset}.json')
-        print(result)
+        if args.format=='onnx':
+            cpu32=create_ort_session(p32,require_cuda=False)
+            parity=check_onnx_parity(model,cpu32,args.size)
+            metrics32=ort_dataset_iou(cpu32,dl['val'])
+            result={'format':'onnx_fp32','opset':args.opset,'run_id':args.run_id,
+                    'val_iou':metrics32['iou'],'valid':metrics32['iou']>=threshold,
+                    'parity':parity,'deploy_bytes':p32.stat().st_size,'path':str(p32),
+                    'providers_active':cpu32.get_providers()}
+            atomic_json(result,out/f'onnx_fp32_opset{args.opset}.json');print(result)
+        else:
+            p16=out/(('baseline_fp16.onnx' if args.run_id in ('C0','BASELINE') else args.run_id.lower()+'_fp16.onnx'))
+            conversion=convert_onnx_fp16(p32,p16)
+            try:
+                result=validate_fp16_export(model,p16,dl['val'],args.size,args.warmup,args.iters)
+                result.update({'format':'onnx_fp16','run_id':args.run_id,'fp32_intermediate':str(p32),
+                               'conversion':conversion,'threshold':threshold,
+                               'valid':result['validation_metrics']['iou']>=threshold,'path':str(p16),
+                               'runtime_status':'validated'})
+            except RuntimeError as exc:
+                result={'format':'onnx_fp16','run_id':args.run_id,'path':str(p16),
+                        'fp32_intermediate':str(p32),'conversion':conversion,
+                        'artifact_bytes':p16.stat().st_size,'threshold':threshold,
+                        'runtime_status':'BLOCKED','blocker':str(exc),
+                        'providers_available':ort.get_available_providers(),
+                        'valid':False}
+            atomic_json(result,out/'onnx_fp16.json');print(result)
     if args.format in ('int8','both'):
         try:
             import onnx
@@ -232,7 +337,7 @@ def quantize(args):
         metrics32=ort_dataset_iou(cpu32,dl['val'])
         float_performance=ort_benchmark(cpu32,args.size,args.warmup,args.iters)
         atomic_json({'format':'onnx_fp32','opset':args.opset,'run_id':args.run_id,'val_iou':metrics32['iou'],
-                     'valid':metrics32['iou']>=threshold,'parity_max_abs':parity,
+                     'valid':metrics32['iou']>=threshold,'parity':parity,
                      'deploy_bytes':p32.stat().st_size,'path':str(p32),**float_performance},out/'onnx_fp32.json')
         # Calibrate both zero state and one propagated state per training image.
         # All calibration samples come exclusively from TRAIN, never val/test.
@@ -279,7 +384,7 @@ def quantize(args):
 def main():
     p=common_parser(argparse.ArgumentParser(description='FP16 and stateful ONNX INT8 PTQ'))
     p.add_argument('--run-id',default='C0')
-    p.add_argument('--format',choices=['fp16','onnx','int8','both'],default='both')
+    p.add_argument('--format',choices=['fp16','onnx','onnx-fp16','int8','both'],default='both')
     p.add_argument('--opset',type=int,default=17,help='ONNX opset version')
     p.add_argument('--calibration-samples',type=int,default=128)
     p.add_argument('--per-channel',action='store_true')

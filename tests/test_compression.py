@@ -10,6 +10,7 @@ from torch import nn
 
 from compression.core import fixed_splits,load_checkpoint_state,evaluate,PersonDataset
 from compression.operators import apply_masks,compress,decompose_svd,make_global_masks,sparsity_info
+from compression.quantization import convert_onnx_fp16,create_ort_session
 
 
 def test_nonzero_global_pruning_is_not_structural():
@@ -61,3 +62,28 @@ def test_mask_and_rgb_size(tmp_path):
     x,y,_=ds[0]
     assert x.shape==(3,32,32) and y.shape==(1,32,32)
     assert float(x.min())==1 and float(y.max())==1
+
+
+def test_onnx_fp16_conversion_keeps_public_io_fp32(tmp_path):
+    onnx=pytest.importorskip('onnx')
+    from onnx import helper,TensorProto
+    x=helper.make_tensor_value_info('image',TensorProto.FLOAT,[1,3,8,8])
+    y=helper.make_tensor_value_info('logits',TensorProto.FLOAT,[1,1,8,8])
+    weight=helper.make_tensor('w',TensorProto.FLOAT,[1,3,1,1],[.2,.3,.5])
+    node=helper.make_node('Conv',['image','w'],['logits'])
+    graph=helper.make_graph([node],'tiny',[x],[y],[weight])
+    model=helper.make_model(graph,opset_imports=[helper.make_opsetid('',13)])
+    src=tmp_path/'tiny.onnx';dst=tmp_path/'tiny_fp16.onnx'
+    onnx.save(model,src)
+    converted=convert_onnx_fp16(src,dst)
+    checked=onnx.load(dst);onnx.checker.check_model(checked)
+    assert converted['fp16_initializers']>=1
+    assert checked.graph.input[0].type.tensor_type.elem_type==TensorProto.FLOAT
+    assert checked.graph.output[0].type.tensor_type.elem_type==TensorProto.FLOAT
+
+
+def test_cuda_ort_provider_never_silently_falls_back(tmp_path):
+    ort=pytest.importorskip('onnxruntime')
+    if 'CUDAExecutionProvider' in ort.get_available_providers():pytest.skip('CUDA EP installed')
+    with pytest.raises(RuntimeError,match='CUDAExecutionProvider unavailable'):
+        create_ort_session(tmp_path/'missing.onnx',require_cuda=True)

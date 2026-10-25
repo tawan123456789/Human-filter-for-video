@@ -1,0 +1,6 @@
+{
+  "runs": [
+    {"id": "SVD50", "ops": [{"kind": "svd", "ratio": 0.5}], "kd": true},
+    {"id": "SLIM50_SVD50", "ops": [{"kind": "slim", "ratio": 0.5}, {"kind": "svd", "ratio": 0.5}], "kd": true}
+  ]
+}

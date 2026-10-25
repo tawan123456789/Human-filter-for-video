@@ -1,0 +1,58 @@
+FROM --platform=linux/arm64 ubuntu:18.04 AS build
+
+ENV DEBIAN_FRONTEND=noninteractive PYTHONUNBUFFERED=1 PIP_DISABLE_PIP_VERSION_CHECK=1
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates libssl1.1 libglib2.0-0 libgomp1 libstdc++6 libgl1 \
+      libx11-6 libxext6 libsm6 libxrender1 binutils \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY build/cpython38_aarch64.tar.gz /tmp/cpython38.tar.gz
+RUN echo "9d8798f9e79e0fc0f36fcb95bfa28a1023407d51a8ea5944b4da711f1f75f1ed  /tmp/cpython38.tar.gz" | sha256sum -c - \
+    && mkdir -p /opt/python38 && tar -xzf /tmp/cpython38.tar.gz -C /opt/python38 \
+    && rm /tmp/cpython38.tar.gz
+ENV PATH=/opt/python38/python/bin:$PATH \
+    PYTHONHOME=/opt/python38/python \
+    LD_LIBRARY_PATH=/opt/python38/python/lib
+
+RUN python3.8 -m pip --version
+
+WORKDIR /src
+COPY jetson_nano/wheels/onnxruntime_gpu-1.11.0-cp38-cp38-linux_aarch64.whl /src/wheels/onnxruntime_gpu-1.11.0-cp38-cp38-linux_aarch64.whl
+RUN python3.8 -m pip install --no-cache-dir \
+      pyinstaller==6.22.3 numpy==1.24.4 opencv-python==4.10.0.84 protobuf==4.25.5 flatbuffers==23.5.26 \
+    && python3.8 -m pip install --no-cache-dir --no-deps /src/wheels/onnxruntime_gpu-1.11.0-cp38-cp38-linux_aarch64.whl
+
+COPY top2_benchmark/realtime_app.py /src/top2_benchmark/realtime_app.py
+COPY jetson_nano/webcam_to_jetson.py /src/jetson_nano/webcam_to_jetson.py
+COPY compression/outputs/jetson_nano_512 /src/compression/outputs/final_512
+RUN mkdir -p /out/nano512_realtime /out/nano512_webcam_to_jetson \
+    && python3.8 -m PyInstaller --noconfirm --clean --onedir \
+      --name nano512_realtime --distpath /out/nano512_realtime --workpath /tmp/pyi-realtime \
+      --add-data /src/compression/outputs/final_512:compression/outputs/final_512 \
+      --collect-binaries onnxruntime --collect-data onnxruntime --collect-all cv2 \
+      --hidden-import onnxruntime.capi.onnxruntime_pybind11_state \
+      /src/top2_benchmark/realtime_app.py \
+    && python3.8 -m PyInstaller --noconfirm --clean --onedir \
+      --name nano512_webcam_to_jetson --distpath /out/nano512_webcam_to_jetson --workpath /tmp/pyi-sender \
+      --add-data /src/compression/outputs/final_512:compression/outputs/final_512 \
+      --collect-binaries onnxruntime --collect-data onnxruntime --collect-all cv2 \
+      --hidden-import onnxruntime.capi.onnxruntime_pybind11_state \
+      /src/jetson_nano/webcam_to_jetson.py
+
+FROM --platform=$BUILDPLATFORM ubuntu:18.04 AS artifact
+COPY dist/jetson_nano_512_gpu_bundle /bundle/jetson_nano_512_gpu_bundle
+COPY --from=build /out/nano512_realtime /bundle/jetson_nano_512_gpu_bundle/nano512_realtime
+COPY --from=build /out/nano512_webcam_to_jetson /bundle/jetson_nano_512_gpu_bundle/nano512_webcam_to_jetson
+RUN mv /bundle/jetson_nano_512_gpu_bundle/nano512_realtime/nano512_realtime \
+      /bundle/jetson_nano_512_gpu_bundle/nano512_realtime/app \
+    && mv /bundle/jetson_nano_512_gpu_bundle/nano512_webcam_to_jetson/nano512_webcam_to_jetson \
+      /bundle/jetson_nano_512_gpu_bundle/nano512_webcam_to_jetson/app \
+    && mv /bundle/jetson_nano_512_gpu_bundle/nano512_webcam_to_jetson/app/nano512_webcam_to_jetson \
+      /bundle/jetson_nano_512_gpu_bundle/nano512_webcam_to_jetson/app/webcam_to_json \
+    && tar -cf /jetson_nano_512_gpu_bundle.tar -C /bundle jetson_nano_512_gpu_bundle
+
+FROM scratch AS export
+COPY --from=artifact /jetson_nano_512_gpu_bundle.tar /
+
+FROM scratch AS realtime_app_patch
+COPY --from=build /out/nano512_realtime/nano512_realtime/nano512_realtime /nano512_realtime

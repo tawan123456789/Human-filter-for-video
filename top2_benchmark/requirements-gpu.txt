@@ -1,0 +1,2 @@
+# CUDA 13 / cuDNN 9 wheel; compatible with the project's CUDA 13 PyTorch wheel.
+onnxruntime-gpu==1.30.0

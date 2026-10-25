@@ -67,12 +67,16 @@ def decompose_svd(model, rank_ratio, min_params=2000):
         orig=layer.weight.numel()+(co if layer.bias is not None else 0)
         reduced=rank*(ci*h*w+co)+(co if layer.bias is not None else 0)
         if reduced>=orig:continue
-        U,S,V=torch.linalg.svd(layer.weight.detach().float().reshape(co,-1).cpu(), full_matrices=False)
+        # Run the exact same SVD on the available accelerator. Decoder kernels can
+        # be very slow with the Windows CPU LAPACK build; preserve CPU fallback.
+        source=layer.weight.detach().float().reshape(co,-1)
+        decomp_device=torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+        U,S,V=torch.linalg.svd(source.to(decomp_device), full_matrices=False)
         left=nn.Conv2d(ci,rank,layer.kernel_size,stride=layer.stride,padding=layer.padding,dilation=layer.dilation,bias=False)
         right=nn.Conv2d(rank,co,1,bias=layer.bias is not None)
         with torch.no_grad():
-            left.weight.copy_(V[:rank].reshape(rank,ci,h,w))
-            right.weight.copy_((U[:,:rank]*S[:rank]).reshape(co,rank,1,1))
+            left.weight.copy_(V[:rank].reshape(rank,ci,h,w).to(left.weight))
+            right.weight.copy_((U[:,:rank]*S[:rank]).reshape(co,rank,1,1).to(right.weight))
             if layer.bias is not None:right.bias.copy_(layer.bias.detach())
         child_replace(model,name,nn.Sequential(left,right))
         changes.append({'layer':name,'rank':rank,'old_params':orig,'new_params':reduced})
