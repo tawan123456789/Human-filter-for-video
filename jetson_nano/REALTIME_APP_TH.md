@@ -1,6 +1,14 @@
 # แอป webcam แบบ realtime
 
-แอปนี้ใช้ SLIM50_SVD50.onnx โดยตรง อ่านภาพจาก webcam ที่ต่อกับเครื่องซึ่งรัน Streamlit และแสดงภาพต้นฉบับคู่กับผล segmentation สด ใช้ webcam index 0–5 และเลือก Mask overlay, Binary mask, Green background หรือ Blur background ได้
+แอปนี้รองรับโมเดลตระกูล RVM ทั้งหมด โดยเฉพาะโมเดล Fine-tuned ที่ให้ประสิทธิภาพและความแม่นยำสูงกว่าโมเดลที่ผ่านการกลั่น (Distilled Model):
+- **RVM-MobileNetV1** (GPU FPS 185.6, IoU 93.18%) — แนะนำสำหรับ Jetson Nano CUDA
+- **RVM-MobileNetV2** (134.7 FPS, 9.67 MB, IoU 92.69%) — โมเดล Embedded Edge สมดุล
+- **RVM-MobileNetV3-Large** (IoU 93.54%) — คุณภาพสูงสุด
+- **RVM-MobileNetV3-Small** (CPU FPS 33.9, 6.39 MB, IoU 91.28%) — สำหรับ CPU-only
+- **SLIM50_SVD50** (IoU 91.16%) — โมเดลกลั่นตั้งต้น
+
+สามารถเลือกโมเดล, webcam index 0–5, provider (Auto/CUDA/CPU) และ effect (Mask overlay, Binary mask, Green background, Blur background, Cyberpunk Neon, Black Cutout) ได้สดๆ
+
 
 ## ติดตั้งและเริ่มใช้
 

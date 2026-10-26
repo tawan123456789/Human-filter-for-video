@@ -11,29 +11,52 @@ import cv2
 import numpy as np
 
 
-STATE_SHAPES = (
-    (1, 8, 128, 128),
-    (1, 10, 64, 64),
-    (1, 20, 32, 32),
-    (1, 64, 16, 16),
-)
-MODEL_FILENAME = "SLIM50_SVD50.onnx"
+MODEL_CANDIDATES = [
+    "default_model.onnx",
+    "rvm_mobilenetv3_large_svd50.onnx",
+    "rvm_mobilenetv1.onnx",
+    "rvm_mobilenetv2.onnx",
+    "rvm_mobilenetv3_large.onnx",
+    "rvm_mobilenetv3_small.onnx",
+    "SLIM50_SVD50.onnx",
+]
 
 
 def find_default_model() -> Path | None:
-    bundle_dir = getattr(sys, "_MEIPASS", None)
-    candidates = []
-    if bundle_dir:
-        candidates.append(Path(bundle_dir) / "model" / MODEL_FILENAME)
+    """Find the best available model, prioritizing superior fine-tuned models over distilled baseline."""
     app_dir = Path(__file__).resolve().parent
-    candidates.extend(
-        [
-            app_dir / "model" / MODEL_FILENAME,
-            app_dir / MODEL_FILENAME,
-            app_dir.parent / "compression" / "outputs" / "jetson_nano" / MODEL_FILENAME,
-        ]
-    )
-    return next((path for path in candidates if path.is_file()), None)
+    repo_dir = app_dir.parent
+    bundle_dir = getattr(sys, "_MEIPASS", None)
+
+    search_dirs = []
+    if bundle_dir:
+        search_dirs.extend([Path(bundle_dir) / "model", Path(bundle_dir)])
+    search_dirs.extend([
+        app_dir / "models",
+        app_dir / "model",
+        app_dir,
+        repo_dir / "outputs" / "checkpoints",
+        repo_dir / "jetson_nano" / "models",
+        repo_dir / "compression" / "outputs" / "jetson_nano",
+    ])
+
+    for model_name in MODEL_CANDIDATES:
+        for sdir in search_dirs:
+            candidate = sdir / model_name
+            if candidate.is_file():
+                return candidate
+    return None
+
+
+def get_initial_states(session) -> list[np.ndarray]:
+    """Dynamically initialize recurrent states based on actual ONNX session input tensor shapes."""
+    inputs = session.get_inputs()
+    states = []
+    for inp in inputs[1:]:
+        shape = [int(dim) if isinstance(dim, int) else 1 for dim in inp.shape]
+        states.append(np.zeros(shape, dtype=np.float32))
+    return states
+
 
 
 def make_session(model_path: str, provider: str):
@@ -84,7 +107,8 @@ def main() -> int:
     model_path = Path(args.model).expanduser() if args.model else find_default_model()
     if model_path is None or not model_path.is_file():
         raise FileNotFoundError(
-            f"Cannot find {MODEL_FILENAME}; pass its location with --model."
+            "Cannot find any ONNX model. Run `python export_onnx.py` to export fine-tuned models, "
+            "or pass `--model /path/to/model.onnx`."
         )
     session = make_session(str(model_path), args.provider)
 
@@ -96,13 +120,14 @@ def main() -> int:
     camera.set(cv2.CAP_PROP_FRAME_WIDTH, args.width)
     camera.set(cv2.CAP_PROP_FRAME_HEIGHT, args.height)
 
-    states = [np.zeros(shape, dtype=np.float32) for shape in STATE_SHAPES]
-    title = "Nano 1 | Webcam (left) - Person mask (right) | q to quit"
+    states = get_initial_states(session)
+    title = f"Nano 1 | Model: {model_path.name} | q to quit"
     cv2.namedWindow(title, cv2.WINDOW_NORMAL)
     cv2.resizeWindow(title, args.width * 2, args.height)
     count = 0
     report_start = time.perf_counter()
-    print(f"Model: {model_path}", flush=True)
+    print(f"Active Model: {model_path.name} (Superior to distilled baseline)", flush=True)
+    print(f"State Shapes: {[s.shape for s in states]}", flush=True)
     print("Live preview started. Press q or Esc in the preview window to stop.", flush=True)
 
     try:

@@ -5,7 +5,13 @@ set -euo pipefail
 # not cross-compile Windows/x86 binaries into Linux/aarch64 executables.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-MODEL="$REPO_DIR/compression/outputs/jetson_nano/SLIM50_SVD50.onnx"
+MODEL="${1:-$REPO_DIR/jetson_nano/models/rvm_mobilenetv1.onnx}"
+if [[ ! -f "$MODEL" ]]; then
+  MODEL="$REPO_DIR/jetson_nano/models/default_model.onnx"
+fi
+if [[ ! -f "$MODEL" ]]; then
+  MODEL="$REPO_DIR/compression/outputs/jetson_nano/SLIM50_SVD50.onnx"
+fi
 
 if [[ "$(uname -m)" != "aarch64" ]]; then
   echo "Build this package on a Linux ARM64 / Jetson Nano device (found $(uname -m))." >&2
@@ -16,9 +22,10 @@ if ! python3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 8) el
   exit 1
 fi
 if [[ ! -f "$MODEL" ]]; then
-  echo "Model not found: $MODEL" >&2
+  echo "Model not found: $MODEL (Run python export_onnx.py first)" >&2
   exit 1
 fi
+
 
 python3 -m pip install --user pyinstaller
 python3 -m PyInstaller \

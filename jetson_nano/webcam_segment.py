@@ -8,12 +8,52 @@ from typing import List
 import cv2
 import numpy as np
 
-STATE_SHAPES = (
-    (1, 8, 128, 128),
-    (1, 10, 64, 64),
-    (1, 20, 32, 32),
-    (1, 64, 16, 16),
-)
+MODEL_CANDIDATES = [
+    "default_model.onnx",
+    "rvm_mobilenetv3_large_svd50_fp16.onnx",
+    "rvm_mobilenetv1_fp16.onnx",
+    "SLIM50_SVD50_fp16.onnx",
+    "rvm_mobilenetv2_fp16.onnx",
+    "rvm_mobilenetv3_small_fp16.onnx",
+    "rvm_mobilenetv3_large_fp16.onnx",
+    "rvm_mobilenetv3_large_svd50.onnx",
+    "rvm_mobilenetv1.onnx",
+    "rvm_mobilenetv2.onnx",
+    "rvm_mobilenetv3_large.onnx",
+    "rvm_mobilenetv3_small.onnx",
+    "SLIM50_SVD50.onnx",
+]
+
+
+def find_default_model() -> Path | None:
+    app_dir = Path(__file__).resolve().parent
+    repo_dir = app_dir.parent
+    search_dirs = [
+        app_dir / "models",
+        app_dir / "model",
+        app_dir,
+        repo_dir / "outputs" / "checkpoints",
+        repo_dir / "jetson_nano" / "models",
+        repo_dir / "compression" / "outputs" / "jetson_nano",
+        repo_dir / "compression" / "outputs" / "jetson_nano_256",
+    ]
+    for model_name in MODEL_CANDIDATES:
+        for sdir in search_dirs:
+            candidate = sdir / model_name
+            if candidate.is_file():
+                return candidate
+    return None
+
+
+def get_initial_states(session) -> list[np.ndarray]:
+    """Dynamically initialize recurrent states based on actual ONNX session input tensor shapes."""
+    inputs = session.get_inputs()
+    states = []
+    for inp in inputs[1:]:
+        shape = [int(dim) if isinstance(dim, int) else 1 for dim in inp.shape]
+        states.append(np.zeros(shape, dtype=np.float32))
+    return states
+
 
 
 def make_session(model_path: str, provider: str):
@@ -22,20 +62,41 @@ def make_session(model_path: str, provider: str):
     except ImportError as exc:
         raise RuntimeError("Install a Jetson-compatible onnxruntime build first") from exc
     available = ort.get_available_providers()
-    if provider == "cuda":
+    print("Available ORT providers:", available, flush=True)
+
+    if provider in ("trt", "tensorrt"):
+        if "TensorrtExecutionProvider" not in available:
+            print("[WARN] TensorrtExecutionProvider unavailable, trying CUDA...", flush=True)
+        providers = ["TensorrtExecutionProvider", "CUDAExecutionProvider", "CPUExecutionProvider"]
+    elif provider == "cuda":
         if "CUDAExecutionProvider" not in available:
             raise RuntimeError(f"CUDAExecutionProvider unavailable; providers: {available}")
         providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
     elif provider == "cpu":
         providers = ["CPUExecutionProvider"]
-    else:
-        providers = (
-            ["CUDAExecutionProvider", "CPUExecutionProvider"]
-            if "CUDAExecutionProvider" in available
-            else ["CPUExecutionProvider"]
-        )
+    else:  # auto
+        providers = []
+        if "TensorrtExecutionProvider" in available:
+            providers.append("TensorrtExecutionProvider")
+        if "CUDAExecutionProvider" in available:
+            providers.append("CUDAExecutionProvider")
+        providers.append("CPUExecutionProvider")
+
     session = ort.InferenceSession(model_path, providers=providers)
-    print("ONNX Runtime providers:", session.get_providers(), flush=True)
+    active = session.get_providers()
+    print("Active ONNX Runtime providers:", active, flush=True)
+    if active and active[0] == "CPUExecutionProvider":
+        print(
+            "\n" + "!" * 70 + "\n"
+            "[WARNING] Model is running on CPUExecutionProvider!\n"
+            "On Jetson Nano this drops speed to ~3-4 FPS.\n"
+            "To get 25-35+ FPS on Jetson Nano:\n"
+            "  1. Install onnxruntime-gpu wheel (wheels/onnxruntime_gpu-*.whl)\n"
+            "  2. Make sure CUDA/cuDNN is in LD_LIBRARY_PATH\n"
+            "  3. Run 'sudo jetson_clocks' and 'sudo nvpmodel -m 0'\n"
+            + "!" * 70 + "\n",
+            flush=True,
+        )
     return session
 
 
@@ -57,8 +118,8 @@ def segment(session, frame_bgr: np.ndarray, states: List[np.ndarray]):
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--camera", type=int, default=0, help="OpenCV webcam index")
-    parser.add_argument("--model", required=True, help="Path to SLIM50_SVD50 ONNX")
-    parser.add_argument("--provider", choices=("auto", "cuda", "cpu"), default="auto")
+    parser.add_argument("--model", default=None, help="Path to ONNX model (defaults to best available model)")
+    parser.add_argument("--provider", choices=("auto", "cuda", "cpu", "trt", "tensorrt"), default="auto")
     parser.add_argument("--width", type=int, default=640)
     parser.add_argument("--height", type=int, default=480)
     parser.add_argument("--fps", type=float, default=20.0, help="FPS for the saved video")
@@ -68,14 +129,24 @@ def main() -> int:
     if args.no_display and not args.output:
         parser.error("--no-display requires --output so the result is saved")
 
-    session = make_session(args.model, args.provider)
+    model_path = Path(args.model).expanduser() if args.model else find_default_model()
+    if model_path is None or not model_path.is_file():
+        raise FileNotFoundError(
+            "Cannot find any ONNX model. Run `python export_onnx.py` to export fine-tuned models, "
+            "or pass `--model /path/to/model.onnx`."
+        )
+
+    session = make_session(str(model_path), args.provider)
     camera = cv2.VideoCapture(args.camera)
     if not camera.isOpened():
         raise RuntimeError(f"Cannot open webcam index {args.camera}")
+    camera.set(cv2.CAP_PROP_BUFFERSIZE, 1)
     camera.set(cv2.CAP_PROP_FRAME_WIDTH, args.width)
     camera.set(cv2.CAP_PROP_FRAME_HEIGHT, args.height)
 
-    states = [np.zeros(shape, dtype=np.float32) for shape in STATE_SHAPES]
+    states = get_initial_states(session)
+    print(f"Active Model: {model_path.name} (Superior to distilled baseline)")
+    print(f"State Shapes: {[s.shape for s in states]}")
     writer = None
     frame_count = 0
     try:
