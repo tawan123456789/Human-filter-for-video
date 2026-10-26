@@ -10,3 +10,4 @@ __pycache__/
 *.onnx
 jetson_nano/models/*.onnx
 !jetson_nano/models/.gitkeep
+/build/

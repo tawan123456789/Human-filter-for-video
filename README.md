@@ -9,56 +9,9 @@
 
 ---
 
-## 📌 บทสรุปผลการทดลอง (Executive Summary)
+## สรุปผลการทดลอง
 
-การทดลองนี้ทำการประเมินและเปรียบเทียบโมเดลทั้งหมด **4 สถาปัตยกรรม** บนชุดข้อมูล **Supervisely Filtered Person Dataset** (ความละเอียด 256x256, Test Set 268 ภาพ, Seed 42):
-
-1. **RVM-MobileNetV3 (Large)** — โมเดลทางการ (Official Pretrained) สำหรับคุณภาพระดับสตูดิโอ
-2. **RVM-MobileNetV3-Small** — โมเดลขนาดเล็กพิเศษ น้ำหนักเบาที่สุด เหมาะสำหรับอุปกรณ์พกพา / Edge CPU
-3. **RVM-MobileNetV2** — โมเดลสถาปัตยกรรม Inverted Residuals ที่ให้จุดสมดุลระหว่างขนาดและความแม่นยำ
-4. **RVM-MobileNetV1** — โมเดลสถาปัตยกรรม Standard Depthwise Convolution ที่ทำความเร็วบน GPU ได้สูงสุด
-
----
-
-## 📊 ตารางเปรียบเทียบตัวชี้วัด (Metrics Comparison Table)
-
-### 1. เปรียบเทียบความแม่นยำ ความซับซ้อน และความเร็วในการประมวลผล
-
-| สถาปัตยกรรมโมเดล (Model) | ขนาดพารามิเตอร์ (Params) | ขนาดไฟล์ FP32 (MB) | GFLOPs @256² | Test BCE Loss | Test IoU 🏆 | Test Dice (F1) | Precision | Recall | GPU Speed (FPS) 🚀 | CPU Speed (FPS) ⚡ |
-|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-| **RVM-MobileNetV3 (Large)** *(Official)* | 3.74 M | 14.5 MB | 5.40 | **0.0577** | **0.9354 (93.5%)** | **0.9666 (96.7%)** | **0.9728** | 0.9606 | ~110 FPS | ~18 FPS |
-| **RVM-MobileNetV1** *(Fine-tuned)* | 4.21 M | 16.8 MB | 6.25 | 0.0791 | **0.9316 (93.2%)** | **0.9646 (96.5%)** | 0.9645 | **0.9647** | **185.6 FPS** | 20.6 FPS |
-| **RVM-MobileNetV2** *(Fine-tuned)* | 2.42 M | 9.67 MB | 4.21 | 0.0686 | **0.9267 (92.7%)** | **0.9619 (96.2%)** | 0.9643 | 0.9596 | 134.7 FPS | 22.8 FPS |
-| **RVM-MobileNetV3-Small** *(Fine-tuned)* | **1.59 M** | **6.36 MB** | **3.27** | 0.0830 | **0.9125 (91.3%)** | **0.9543 (95.4%)** | 0.9548 | 0.9537 | 126.8 FPS | **33.9 FPS** |
-
-> *หมายเหตุ: การวัด FPS ทำการทดสอบบน NVIDIA GeForce RTX 5060 Laptop GPU และ Intel Core CPU ที่อินพุตขนาด 256x256 แบบ Streaming Loop ต่อเนื่องพร้อม Recurrent State*
-
----
-
-### 2. เปรียบเทียบก่อนและหลังการ Fine-tune (Pretrained Baseline vs Fine-tuned)
-
-| โมเดล | การตั้งค่าเริ่มต้น (Initialization) | Baseline IoU (ก่อนเทรน) | Fine-tuned IoU (หลังเทรน) | การปรับปรุงสัมพัทธ์ (Relative Gain) |
-|---|---|:---:|:---:|:---:|
-| **RVM-MobileNetV3 (Large)** | Official RVM Pretrained (Matting) | 0.9288 (92.88%) | **0.9354 (93.54%)** | +0.66% (+0.71% relative) |
-| **RVM-MobileNetV1** | ImageNet Pretrained (timm) | 0.0000 (0.00%) | **0.9318 (93.18%)** | +93.18% (เรียนรู้โครงสร้างใหม่สมบูรณ์) |
-| **RVM-MobileNetV2** | ImageNet Pretrained (torchvision) | 0.0000 (0.00%) | **0.9269 (92.69%)** | +92.69% (เรียนรู้โครงสร้างใหม่สมบูรณ์) |
-| **RVM-MobileNetV3-Small** | ImageNet Pretrained (torchvision) | 0.3322 (33.22%) | **0.9128 (91.28%)** | +58.05% (+174.7% relative) |
-
----
-
-## 🔍 การวิเคราะห์และข้อค้นพบเชิงลึก (Key Findings & Insights)
-
-### 1. ความแม่นยำสูงสูสี แม้ลดขนาดพารามิเตอร์ลงเกินเท่าตัว
-* **RVM-MobileNetV3 (Large)** ให้ความแม่นยำสูงสุดที่ **IoU 93.54%** เนื่องจากมี Receptive Field กว้างและใช้ Pretrained Matting Weights ทางการ
-* **RVM-MobileNetV1** ทำผลงานได้อย่างน่าประทับใจโดยได้ **IoU 93.16%** และ Recall สูงสุดที่ **96.47%** เก็บขอบเส้นผมและขอบตัวคนได้หนาและสม่ำเสมอที่สุด
-* **RVM-MobileNetV2** ทำ IoU ได้ **92.67%** โดยใช้ขนาดพารามิเตอร์เพียง **2.42M** (ประหยัดกว่า V1 ถึง 42%)
-* **RVM-MobileNetV3-Small** ได้ IoU **91.25%** และ Dice **95.43%** ซึ่งแตกต่างจากตัว Large เพียง ~2.3% แต่ลดขนาดลงเหลือเพียง **1.59M พารามิเตอร์ (6.36 MB)**
-
-### 2. การวิเคราะห์ความเร็ว (Speed & Throughput Analysis)
-* **แชมป์ความเร็วบน GPU: MobileNetV1 (185.6 FPS)**
-  * เนื่องจากสถาปัตยกรรมของ V1 ใช้การเชื่อมต่อแบบเรียบง่าย (Straightforward Depthwise Separable Convolutions) โดยไม่มี Residual Skip Connection ซับซ้อน ทำให้เกิด Memory Bandwidth Overhead ต่ำบนสถาปัตยกรรม GPU สมัยใหม่
-* **แชมป์ความเร็วบน CPU: MobileNetV3-Small (33.9 FPS)**
-  * ด้วยขนาดเพียง **3.27 GFLOPs** ทำให้ V3-Small สามารถประมวลผลบน CPU แบบ Single Thread ได้เกิน 30 FPS สบายๆ จึงเป็นโมเดลที่แนะนำมากที่สุดสำหรับอุปกรณ์ Edge Device ที่ไม่มีการ์ดจอแยก (เช่น Raspberry Pi 5, Jetson Nano, หรือ Mini PC)
+โครงการทดลอง RVM กับ MobileNetV3-Large, MobileNetV3-Small, MobileNetV2 และ MobileNetV1 รวมถึง structural compression, precision conversion และ fine-tune ด้วย Gaussian blur/noise. รายการทุกรุ่นและทุกรอบทดลอง ผลที่วัดได้ และข้อจำกัดของแต่ละ split รวมไว้ใน [รายงานผลการทดลองฉบับรวม](compression/EXPERIMENT_RESULTS.md).
 
 ---
 
@@ -77,6 +30,12 @@
 ---
 
 ## 🛠️ โครงสร้างโปรเจกต์และการใช้งาน
+
+### Preprocessing สำหรับ Fine-tuning
+
+ในโน้ตบุ๊ก fine-tune ทั้ง 4 รุ่น ภาพ train จะถูก resize ก่อน แล้วสุ่มทำ Gaussian blur (โอกาส 25%, radius 0.3–1.2) และ Gaussian noise (โอกาส 35%, standard deviation 0.01–0.05 บนช่วงพิกเซล 0–1) โดยแต่ละ augmentation สุ่มแยกกันและอาจเกิดพร้อมกันได้ ใช้กับภาพเท่านั้น ไม่เปลี่ยน mask; validation และ test ใช้ภาพเดิมโดยไม่เพิ่ม noise/blur ส่วน horizontal flip ยังคงทำงานเหมือนเดิม
+
+การเปลี่ยนนี้มีผลเมื่อรัน fine-tuning ใหม่ checkpoint และตัวเลขผลเดิมใน `outputs/` ยังมาจากการฝึกก่อนเพิ่ม augmentation
 
 ```text
 Human-filter-for-video/
@@ -136,9 +95,4 @@ streamlit run compression_app.py
 
 ## 📦 สรุปคำแนะนำสำหรับการนำไปติดตั้งใช้งานจริง (Deployment Recommendation)
 
-| สถานการณ์การใช้งาน | โมเดลที่แนะนำ | เหตุผล |
-|---|:---:|---|
-| **อุปกรณ์ Edge / IoT / CPU เท่านั้น** *(เช่น Raspberry Pi, Thin Client)* | **RVM-MobileNetV3-Small** | ขนาดไฟล์เล็กที่สุด (6.36 MB), กินสเปกต่ำเพียง 3.27 GFLOPs, ทำความเร็ว CPU ได้สูงสุดถึง 33.9 FPS |
-| **อุปกรณ์ Embedded GPU / Mobile Device** *(เช่น Jetson Orin, Android/iOS)* | **RVM-MobileNetV2** | ขนาดไฟล์พอเหมาะ (9.67 MB), สถาปัตยกรรม Inverted Residuals รองรับฮาร์ดแวร์ NPU/DSP ดีเยี่ยม, IoU สูงถึง 92.67% |
-| **เซิร์ฟเวอร์สตรีมมิ่ง / Live Broadcast GPU** *(ต้องการ FPS สูงสุด)* | **RVM-MobileNetV1** | ทำความเร็วบน GPU ได้สูงสุดถึง 185.6 FPS, ความแม่นยำสูง (IoU 93.16%), ตัดขอบคนได้คมและสม่ำเสมอ |
-| **งาน Production ตัดต่อวิดีโอคุณภาพสูง** | **RVM-MobileNetV3 (Large)** | ความแม่นยำและ Fine Detail ขอบเส้นผมดีที่สุด (IoU 93.54%), Test Loss ต่ำที่สุด (0.0577) |
+ผลเปรียบเทียบและข้อเสนอแนะจากการทดลองแต่ละ backbone/compression อยู่ใน [รายงานรวมผลการทดลอง](compression/EXPERIMENT_RESULTS.md). ควรวัดซ้ำบนอุปกรณ์และ runtime เป้าหมายก่อนเลือกโมเดลสำหรับ production.

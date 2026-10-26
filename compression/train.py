@@ -86,6 +86,8 @@ def experiment(args,spec,context=None):
              'epochs':args.epochs,'batch_size':args.batch_size,'lr_backbone':args.lr_backbone,
              'lr_other':args.lr_other,'seed':args.seed,'weight_decay':args.weight_decay,
              'kd_weight':args.kd_weight,'temperature':args.temperature,'size':args.size,
+             'train_augmentation':{'gaussian_blur_probability':0.25,'blur_radius':[0.3,1.2],
+                                   'gaussian_noise_probability':0.35,'noise_std':[0.01,0.05]},
              'device':args.device,'amp':args.amp,'patience':args.patience,
              'max_iou_drop':args.max_iou_drop,'skip_benchmark':args.skip_benchmark}
     result_file=run_dir/'result.json'

@@ -16,7 +16,7 @@ from pathlib import Path
 
 import numpy as np
 import torch
-from PIL import Image, ImageOps
+from PIL import Image, ImageFilter, ImageOps
 from torch import nn
 from torch.utils.data import DataLoader, Dataset
 
@@ -190,25 +190,34 @@ def fixed_splits(pairs, output_dir, manifest=None, seed=42):
 
 
 class PersonDataset(Dataset):
-    def __init__(self, pairs, keys, size=256):
-        self.pairs, self.ids, self.size = pairs, list(keys), size
+    def __init__(self, pairs, keys, size=256, augment=False):
+        self.pairs, self.ids, self.size, self.augment = pairs, list(keys), size, augment
     def __len__(self):
         return len(self.ids)
     def __getitem__(self, idx):
         img,mask = self.pairs[self.ids[idx]]
         with Image.open(img) as f:
-            x = np.asarray(ImageOps.exif_transpose(f).convert('RGB').resize((self.size,self.size),Image.Resampling.BILINEAR), dtype=np.float32).copy().transpose(2,0,1)/255.0
+            image = ImageOps.exif_transpose(f).convert('RGB').resize((self.size,self.size),Image.Resampling.BILINEAR)
+        if self.augment and random.random() < 0.25:
+            image = image.filter(ImageFilter.GaussianBlur(radius=random.uniform(0.3, 1.2)))
+        x = np.asarray(image, dtype=np.float32).copy().transpose(2,0,1)/255.0
+        if self.augment:
+            x = torch.from_numpy(x)
+            if random.random() < 0.35:
+                x = (x + torch.randn_like(x) * random.uniform(0.01, 0.05)).clamp_(0.0, 1.0)
+        else:
+            x = torch.from_numpy(x)
         with Image.open(mask) as f:
             y = np.asarray(f.convert('L').resize((self.size,self.size),Image.Resampling.NEAREST),dtype=np.uint8)
         y = (y > (0 if y.max()<=1 else 127)).astype(np.float32)[None]
-        return torch.from_numpy(x), torch.from_numpy(y), self.ids[idx]
+        return x, torch.from_numpy(y), self.ids[idx]
 
 
 def loaders(args, output_dir):
     pairs=discover_pairs(args.data_dir,args.images_dir,args.masks_dir)
     split, manifest=fixed_splits(pairs,output_dir,args.split_manifest,args.seed)
     def make(part, shuffle=False):
-        return DataLoader(PersonDataset(pairs,split[part],args.size),batch_size=args.batch_size,
+        return DataLoader(PersonDataset(pairs,split[part],args.size,augment=(part=='train')),batch_size=args.batch_size,
                           shuffle=shuffle,num_workers=args.workers,pin_memory=str(args.device).startswith('cuda'))
     return {part:make(part,part=='train') for part in ('train','val','test')},manifest
 
