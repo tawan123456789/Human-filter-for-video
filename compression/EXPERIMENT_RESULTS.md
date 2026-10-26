@@ -91,7 +91,36 @@ README เดิมยังมี benchmark snapshot อีกชุดจา�
 
 ตาราง snapshot เป็น historical report ไม่ใช่ผล benchmark รอบ compression/Jetson. GFLOPs และ FPS แตกต่างจาก backbone_comparison.csv; คงแยก source ไว้และไม่ผสมเป็นค่าเดียว.
 
-## สินค้าทดลองทั้งหมด: compression search รุ่นแรก
+### ทดสอบ baseline backbone ใหม่: RVM-ResNet50
+
+ทดสอบ official pretrained RVM-ResNet50 เทียบกับ official pretrained RVM-MobileNetV3-Large และ checkpoint MobileNetV3-Large ที่ fine-tune บน Supervisely. ใช้ validation split เดียวกัน 266 ภาพ, 256×256, preprocessing เดียวกัน, recurrent state inference. วัด GPU ด้วย 20 warm-up และ 100 iterations บน RTX 5070 Ti Laptop GPU; FPS เป็นเฉพาะ model inference เมื่อ input อยู่บน GPU แล้ว. ไม่ประเมิน test set.
+
+| Baseline | Params | Weight file | Val IoU | Val Dice | BCE | Precision / Recall | Global IoU | Mean latency | p50 / p95 | FPS | Peak GPU memory |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| **RVM-ResNet50 official pretrained** | 26,890,461 | 107,905,875 B | **0.925997** | 0.954975 | 0.055495 | 0.973712 / 0.966105 | 0.941547 | 14.211 ms | 13.442 / 19.906 ms | 70.37 | 149.60 MiB |
+| RVM-MobileNetV3-Large official pretrained | 3,748,633 | 15,217,721 B | 0.924553 | 0.958197 | **0.052507** | **0.980883** / 0.958727 | 0.941141 | 15.876 ms | 14.639 / 21.367 ms | 62.99 | 49.04 MiB |
+| RVM-MobileNetV3-Large Supervisely fine-tuned | 3,747,757 | 15,244,931 B | **0.928267** | **0.960751** | **0.046718** | 0.973584 / **0.969740** | **0.944879** | 14.319 ms | 14.274 / 17.270 ms | 69.84 | 49.03 MiB |
+
+**ผลอ่าน:** ResNet50 pretrained ได้ mean IoU สูงกว่า MobileNetV3-Large pretrained เล็กน้อย (+0.14 percentage points) และ latency เฉลี่ยต่ำกว่าในเครื่องนี้ แต่ Dice และ BCE แย่กว่า MobileNetV3-Large pretrained; เมื่อเทียบ checkpoint fine-tuned ก็ยังตามทั้ง IoU/Dice/BCE อยู่. แลกกับพารามิเตอร์ประมาณ 7.2 เท่าและ weight file ประมาณ 7.1 เท่า. ผลนี้ยังเป็น baseline-only; ยังไม่ได้ fine-tune ResNet50 บน Supervisely จึงสรุปไม่ได้ว่า ResNet50 หลัง fine-tune จะดีกว่าหรือไม่.
+
+รายละเอียด reproducibility: RVM checkpoint SHA-256 c191a807251164c073dce5fa408e7a816070d539b882b2a3150330a9fec112ce; MobileNetV3 official SHA-256 3c7c1d92033f7c38d6577c481d13a195d7d80a159b960f4f3119ac7b534cf4f8; fine-tuned checkpoint SHA-256 9530f79cda1e96448b60ce2288c00db49275ad7fc40b6da8299ebc6aec6514ca. JSON รายละเอียดอยู่ที่ compression/outputs/baseline_backbone_resnet50/result.json และ script compression/evaluate_baseline_backbones.py. คำสั่งรันซ้ำ: .\.venv\Scripts\python.exe -m compression.evaluate_baseline_backbones --rvm-source third_party\RobustVideoMatting --device cuda --size 256 --batch-size 8 --workers 0 --warmup 20 --iters 100
+
+## ผลทดสอบ GPU และ compression experiments
+
+### MobileNet 4-backbone throughput บน GPU เดียวกัน
+
+รัน benchmark แยกบน RTX 5070 Ti Laptop GPU: FP32, input 256×256, batch 1, recurrent state ต่อเนื่อง, warm-up 20, measured 100. V3-Large ใช้ checkpoint fine-tuned; สำหรับ V1/V2/V3-Small ไม่พบ fine-tuned checkpoints ใน workspace จึงวัด inference graph ด้วย random-initialized weights. ตัวเลข FPS เป็นผลวัดใหม่; IoU/Dice เป็น historical test values จาก backbone_comparison.csv ไม่ได้วัดซ้ำในรอบนี้.
+
+| Backbone | Params | Historical test IoU / Dice | Mean ms | p50 / p95 ms | GPU FPS | Weights used for timing |
+|---|---:|---:|---:|---:|---:|---|
+| MobileNetV3-Large | 3,747,757 | 0.93322 / 0.96546 | 14.319 | 14.274 / 17.270 | 69.84 | Fine-tuned checkpoint |
+| MobileNetV3-Small | 1,590,109 | 0.91194 / 0.95394 | 11.954 | 11.861 / 14.605 | 83.66 | Random graph weights |
+| MobileNetV2 | 2,417,917 | 0.92794 / 0.96262 | 12.199 | 11.749 / 15.961 | 81.98 | Random graph weights |
+| MobileNetV1 | 4,205,949 | 0.93345 / 0.96558 | 9.074 | 8.782 / 12.736 | **110.21** | Random graph weights |
+
+Random graph weights do not alter dense inference operations, but this timing is not an end-to-end run of the historical fine-tuned checkpoints. Do not treat the old IoU/Dice test scores as newly measured validation results. Reproduce with compression/benchmark_backbone_gpu.py; detailed timings are in compression/outputs/backbone_gpu_retest_20261027/fps.json. The current V3-Large validation IoU/Dice and ResNet50 baseline comparison are in compression/outputs/baseline_backbone_resnet50/result.json.
+
+### Compression search รุ่นแรก
 
 มีการฝึก CONTROL และ candidate เจ็ดแบบด้วย teacher checkpoint เดียวกัน. ทุก run ด้านล่างใช้ compression split SHA-256 5e2ae755cdca23268855bb9958312cbec863c6c669ddd5909c89f56d960c7747, ไม่ใช่ split Midterm ที่ใช้สำหรับ run final. Validation gate ของรอบนั้นคือ IoU ≥0.81995. ค่า params และ checkpoint size เป็นค่าจาก artifact จริง.
 

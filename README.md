@@ -11,7 +11,21 @@
 
 ## สรุปผลการทดลอง
 
-โครงการทดลอง RVM กับ MobileNetV3-Large, MobileNetV3-Small, MobileNetV2 และ MobileNetV1 รวมถึง structural compression, precision conversion และ fine-tune ด้วย Gaussian blur/noise. รายการทุกรุ่นและทุกรอบทดลอง ผลที่วัดได้ และข้อจำกัดของแต่ละ split รวมไว้ใน [รายงานผลการทดลองฉบับรวม](compression/EXPERIMENT_RESULTS.md).
+โครงการทดลอง RVM กับ ResNet50, MobileNetV3-Large, MobileNetV3-Small, MobileNetV2 และ MobileNetV1 รวมถึง structural compression, precision conversion และ fine-tune ด้วย Gaussian blur/noise. รายการทุกรุ่นและทุกรอบทดลอง ผลที่วัดได้ และข้อจำกัดของแต่ละ split รวมไว้ใน [รายงานผลการทดลองฉบับรวม](compression/EXPERIMENT_RESULTS.md).
+
+### เปรียบเทียบ backbone บน GPU เดียวกัน
+
+ใช้ RTX 5070 Ti Laptop GPU, FP32, input 256×256, batch 1, recurrent state ต่อเนื่อง, warm-up 20 และวัด 100 iterations. คอลัมน์ IoU/Dice ของ MobileNet เป็น historical test results; FPS วัดใหม่ในรอบนี้.
+
+| Model | Params (M) | IoU / Dice | ที่มาของ IoU/Dice | Mean latency | GPU FPS |
+|---|---:|---:|---|---:|---:|
+| **RVM-ResNet50** | 26.890 | 0.925997 / 0.954975 | Validation, official pretrained | 14.211 ms | 70.37 |
+| RVM-MobileNetV3-Large | 3.748 | 0.93322 / 0.96546 | Historical test | 14.319 ms | 69.84 |
+| RVM-MobileNetV3-Small | 1.590 | 0.91194 / 0.95394 | Historical test | 11.954 ms | 83.66 |
+| RVM-MobileNetV2 | 2.418 | 0.92794 / 0.96262 | Historical test | 12.199 ms | 81.98 |
+| RVM-MobileNetV1 | 4.206 | 0.93345 / 0.96558 | Historical test | 9.074 ms | **110.21** |
+
+*ไม่มี fine-tuned checkpoints ของ V1/V2/V3-Small ใน workspace; วัด FPS จาก architecture graph ด้วย random weights ซึ่งไม่เปลี่ยน dense compute. ค่า IoU/Dice จึงเป็นค่ารายงานเดิมและไม่ได้วัดใหม่. รายละเอียดและข้อจำกัดอยู่ใน [รายงานผลการทดลองฉบับรวม](compression/EXPERIMENT_RESULTS.md).*
 
 ---
 
